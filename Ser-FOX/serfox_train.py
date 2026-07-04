@@ -125,7 +125,8 @@ parser.add_argument('--compile', type=parse_bool, nargs='?', const=True, default
 parser.add_argument('--no_compile', action='store_false', dest='compile', help='Disable torch.compile')
 parser.add_argument('--regen_blocks_per_step', type=int, default=1000, help='Number of base samples processed per trajectory regeneration chunk')
 parser.add_argument('--regen_max_blocks', type=int, default=0, help='If >0, regenerate only this many randomly chosen base samples per round boundary instead of the full set (deterministic per-round subset seeded by iter). Big speedup on large datasets (e.g. 900k-block path/sudoku); training resamples rows from the regenerated pool anyway, so a 200k subset still gives each row ~256 visits per 50k-iter round.')
-parser.add_argument('--regen_position_temperature', type=float, default=0.0, help='FOX regeneration temperature over trajectory positions only; <=0 keeps deterministic argmax ordering')
+parser.add_argument('--regen_position_temperature', type=float, default=0.0, help='Legacy compatibility flag retained in logs; offline regen selection is controlled by --regen_copies_per_sample (N=1 argmax, N>1 soft-label sampling).')
+parser.add_argument('--regen_copies_per_sample', type=int, default=1, help='Offline pseudo-online regen copies per base sample. N=1 writes deterministic argmax train_<round>.bin; N>1 samples N trajectories from soft-index positions and writes train_<round>_xN.bin. default: 1')
 parser.add_argument('--dataset', type=str, default=None, help='Dataset path relative to data/ (e.g. cd/cd3/k1); default keeps legacy root meta.pkl/base.bin')
 parser.add_argument('--test_file', type=str, default=None, help='Optional test file for eval_interval test loss and per-round exact-match eval (.bin, .jsonl, or .json)')
 parser.add_argument('--init_from', type=str, default='scratch', choices=['scratch', 'resume'], help='Start from scratch or resume from a checkpoint')
@@ -138,9 +139,9 @@ parser.add_argument('--first_round_l2r', type=parse_bool, nargs='?', const=True,
 parser.add_argument('--loss_mode', type=str, default='all', choices=['all', 'value_only'], help='Loss on all serialized tokens (V1) or only value tokens (V2); default: all')
 parser.add_argument('--skip_loss_eval', type=parse_bool, nargs='?', const=True, default=False, help='Skip estimate_loss (train/val/test loss); keeps only AR/PI accuracy eval. Big speedup when soft-index val eval triggers slow online build_soft_index_targets.')
 parser.add_argument('--index_loss_mode', type=str, default='hard', choices=['hard', 'soft'], help='Index-token supervision: hard next-token CE or soft distribution distillation; default: hard')
-parser.add_argument('--soft_index_score_mode', type=str, default='p1-p2', choices=['argmax', 'entropy', 'p1-p2', 'logit_margin', 'gt_prob', 'gt_logprob', 'uniform'], help='Score for soft index targets from parallel value distributions; p1-p2 = prob margin (saturates to 1.0 in confident region -> soft target collapses toward uniform), logit_margin = raw-logit top1-top2 (unbounded, preserves full clue>easy>hard order, pair with soft_index_temperature ~5), uniform = 1/k order-invariance prior')
+parser.add_argument('--soft_index_score_mode', type=str, default='p1-p2', choices=['argmax', 'entropy', 'p1-p2', 'logit_margin', 'gt_prob', 'gt_logprob', 'uniform'], help='Score for soft index targets from parallel value distributions; p1-p2 = prob margin (saturates to 1.0 in confident region -> soft target collapses toward uniform), logit_margin = ground-truth value logit minus best non-ground-truth value logit (unbounded, preserves clue>easy>hard order, pair with soft_index_temperature ~5), uniform = 1/k order-invariance prior')
 parser.add_argument('--soft_index_temperature', type=float, default=1.0, help='Temperature for soft index target distribution')
-parser.add_argument('--shuffle_order', type=parse_bool, nargs='?', const=True, default=False, help='Randomly permute (index, value) pair order per train sample. FOX round design: ROUND-1 (iter<round_interval) shuffles ALL rows -> model learns ORDER-INVARIANCE -> HIGH PI, and this round-1 model is what generates the round-2 trajectories. ROUND-2+ shuffles ONLY the canonical/L2R mix rows (regen rows are kept in their confident-first easy-to-hard order, NOT shuffled, which is what boosts AR via self-distillation). default: False')
+parser.add_argument('--shuffle_order', type=parse_bool, nargs='?', const=True, default=True, help='Randomly permute (index, value) pair order per train sample. FOX round design: ROUND-1 (iter<round_interval) shuffles ALL rows -> model learns ORDER-INVARIANCE -> HIGH PI, and this round-1 model is what generates the round-2 trajectories. ROUND-2+ shuffles ONLY the canonical/L2R mix rows (regen rows are kept in their confident-first easy-to-hard order, NOT shuffled, which is what boosts AR via self-distillation). default: True')
 parser.add_argument('--first_round_only', type=parse_bool, nargs='?', const=True, default=False, help='Stop after round 1 (skip trajectory regeneration); default: False')
 parser.add_argument('--warm_from_best_round', type=parse_bool, nargs='?', const=True, default=False, help='At each round boundary, reload the highest-AR checkpoint of the just-finished round (overfit guard: stop scanning after 2 consecutive AR drops) before regen+continue, instead of warm-starting from the last ckpt; default: False')
 parser.add_argument('--mix_ratios', type=str, default='1.0,0.0,0.0', help='Sampling ratios for [Main, Prev, Canonical] in round 2+; 1.0,0.0,0.0 = pure regen (default), 0.7,0.2,0.1 = warm+mix')
@@ -198,6 +199,7 @@ max_iters = args.max_iters
 regen_blocks_per_step = args.regen_blocks_per_step
 regen_max_blocks = args.regen_max_blocks
 regen_position_temperature = args.regen_position_temperature
+regen_copies_per_sample = args.regen_copies_per_sample
 dataset = args.dataset
 init_from = args.init_from
 run_name = args.run_name
@@ -222,6 +224,8 @@ if online_regen_temperature <= 0:
     raise ValueError(f'--online_regen_temperature must be > 0, got {online_regen_temperature}')
 if online_regen_noise_std < 0:
     raise ValueError(f'--online_regen_noise_std must be >= 0, got {online_regen_noise_std}')
+if regen_copies_per_sample < 1:
+    raise ValueError(f'--regen_copies_per_sample must be >= 1, got {regen_copies_per_sample}')
 mix_ratios = [float(x) for x in args.mix_ratios.split(',')]
 if len(mix_ratios) != 3:
     raise ValueError(f"--mix_ratios must have exactly 3 values [Main, Prev, Canonical], got {len(mix_ratios)}")
@@ -458,6 +462,7 @@ print(
     f"soft_index_score_mode={soft_index_score_mode}, soft_index_temperature={soft_index_temperature}, "
     f"shuffle_order={shuffle_order}, mix_ratios={mix_ratios}, "
     f"regen_position_temperature={regen_position_temperature}, "
+    f"regen_copies_per_sample={regen_copies_per_sample}, "
     f"online_regen_sample={online_regen_sample}, online_regen_method={online_regen_method}, "
     f"online_regen_temperature={online_regen_temperature}, online_regen_noise_std={online_regen_noise_std}"
 )
@@ -681,37 +686,39 @@ def _soft_index_file_for_train_path(train_path):
     return train_path.with_name(f"{train_path.stem}.softidx_{_soft_index_mode_tag()}.f32")
 
 
-def _soft_index_expected_bytes(cfg):
+def _soft_index_expected_bytes(cfg, copies_per_sample=1):
     raw_base = np.memmap(base_path, dtype=np.uint16, mode='r')
     num_blocks = len(raw_base) // cfg.base_seq_len
     del raw_base
-    return num_blocks * cfg.response_size * cfg.response_size * np.dtype(np.float32).itemsize
+    return num_blocks * copies_per_sample * cfg.response_size * cfg.response_size * np.dtype(np.float32).itemsize
 
 
-def _soft_index_file_ready(path, cfg):
+def _soft_index_file_ready(path, cfg, copies_per_sample=None):
     path = Path(path)
     try:
         if not path.exists():
             return False
         size = path.stat().st_size
+        copies = regen_copies_per_sample if copies_per_sample is None else int(copies_per_sample)
         if regen_max_blocks > 0:
             row_bytes = cfg.response_size * cfg.response_size * np.dtype(np.float32).itemsize
             return size > 0 and size % row_bytes == 0
-        return size == _soft_index_expected_bytes(cfg)
+        return size == _soft_index_expected_bytes(cfg, copies_per_sample=copies)
     except OSError:
         return False
 
 
-def _map_soft_index_file(path, cfg):
+def _map_soft_index_file(path, cfg, copies_per_sample=None):
     if index_loss_mode != 'soft':
         return None
     path = Path(path)
-    if not _soft_index_file_ready(path, cfg):
+    copies = regen_copies_per_sample if copies_per_sample is None else int(copies_per_sample)
+    if not _soft_index_file_ready(path, cfg, copies_per_sample=copies):
         return None
-    if regen_max_blocks > 0:
-        # Subsampled regen writes only regen_max_blocks rows of soft-index targets;
-        # derive num_blocks from the actual soft-index file size, NOT the full base
-        # set, or the mmap shape overshoots the file ("mmap length > file size").
+    if regen_max_blocks > 0 or copies > 1:
+        # Subsampled or multi-copy regen can write a row count different from
+        # the full base set; derive num_blocks from the actual soft-index file
+        # size, or the mmap shape overshoots the file.
         row_bytes = cfg.response_size * cfg.response_size * np.dtype(np.float32).itemsize
         num_blocks = path.stat().st_size // row_bytes
     else:
@@ -743,13 +750,11 @@ def get_batch(split):
     data_size = prompt_len + 2 * target_len
 
     use_online_regen = (split == 'train' and online_regen_sample and iter_num >= round_interval and online_regen_model is not None)
-    use_mix = (split == 'train' and iter_num >= round_interval and not use_online_regen
+    use_mix = (split == 'train' and iter_num >= round_interval
                and (mix_ratios[1] > 0 or mix_ratios[2] > 0))
     sources = None
     soft_index_targets = None
-    if use_online_regen:
-        z = _sample_online_regen_batch(batch_size)
-    elif use_mix:
+    if use_mix:
         has_prev = bool(data_prev_list)
         if has_prev:
             effective_ratios = mix_ratios
@@ -757,7 +762,11 @@ def get_batch(split):
             effective_ratios = [mix_ratios[0] + mix_ratios[1], 0.0, mix_ratios[2]]
         sources = np.random.choice(3, size=batch_size, p=effective_ratios)
         z = torch.empty(batch_size, data_size, dtype=torch.long)
-        if index_loss_mode == 'soft' and not (loss_mode == 'value_only' and iter_num < round_interval):
+        if (
+            index_loss_mode == 'soft'
+            and not use_online_regen
+            and not (loss_mode == 'value_only' and iter_num < round_interval)
+        ):
             soft_index_targets = torch.empty(batch_size, response_size, response_size, dtype=torch.float32)
         # source 0: main (current round regen, model's confident-first order)
         mask0 = sources == 0
@@ -769,11 +778,14 @@ def get_batch(split):
                 z[batch_rows] = z0
                 soft0 = _sample_soft_index_targets(data_main_soft, rows0)
                 if soft0 is None:
-                    soft_index_targets[batch_rows] = 0.0
+                    soft_index_targets = None
                 else:
                     soft_index_targets[batch_rows] = soft0
             else:
-                z[batch_rows] = _sample_from_source(data_main, n0, data_size)
+                if use_online_regen:
+                    z[batch_rows] = _sample_online_regen_batch(n0)
+                else:
+                    z[batch_rows] = _sample_from_source(data_main, n0, data_size)
         # source 1: prev — UNIFORM across all prior-round regen files
         mask1 = sources == 1
         n1 = int(mask1.sum())
@@ -785,7 +797,7 @@ def get_batch(split):
                 )
                 z[batch_rows] = z1
                 if soft1 is None:
-                    soft_index_targets[batch_rows] = 0.0
+                    soft_index_targets = None
                 else:
                     soft_index_targets[batch_rows] = soft1
             else:
@@ -800,6 +812,8 @@ def get_batch(split):
             )
             if soft_index_targets is not None:
                 soft_index_targets[canonical_batch_rows] = 0.0
+    elif use_online_regen:
+        z = _sample_online_regen_batch(batch_size)
     else:
         if split == 'train':
             data = data_main
@@ -843,6 +857,14 @@ def get_batch(split):
     x = z[:,:-1].clone()
     y = z[:,1:].clone()
     y[:, :prompt_len - 1] = -100
+
+    # Canonical/L2R mix rows maintain value order-invariance. In round 2+ they
+    # should not add hard or soft supervision on a particular index order.
+    if sources is not None:
+        canonical_rows = np.where(sources == 2)[0]
+        if len(canonical_rows) > 0:
+            idx_target_pos = torch.arange(target_len) * 2 + (prompt_len - 1)
+            y[torch.from_numpy(canonical_rows).unsqueeze(1), idx_target_pos.unsqueeze(0)] = -100
 
     # When index_loss_mode='soft', do NOT mask index targets in round 1: soft loss
     # is only applied at iter >= round_interval, so round 1 needs the index targets
@@ -1564,11 +1586,14 @@ def regenerate_trajectory_data(start_block=None, end_block=None, override_model=
             z = torch.from_numpy(base_2d[chunk_idx].astype(np.int64))
 
             z = z.to(device)
-            a, _ = z.shape
 
             z_basic = z[:, :cfg.quiz_size]
             z_result = z[:, cfg.quiz_size : cfg.quiz_size + cfg.response_size]
+            if regen_copies_per_sample > 1:
+                z_basic = z_basic.repeat_interleave(regen_copies_per_sample, dim=0)
+                z_result = z_result.repeat_interleave(regen_copies_per_sample, dim=0)
 
+            a = z_basic.shape[0]
             index_tokens = torch.arange(0, cfg.num_index_tokens, dtype=torch.long, device=device).unsqueeze(0)
             index_tokens = (index_tokens + cfg.index_token_start).expand(a, -1)
             kv_cache = None
@@ -1604,9 +1629,9 @@ def regenerate_trajectory_data(start_block=None, end_block=None, override_model=
                 if return_soft_index:
                     soft_steps.append(soft_dist.detach().cpu().float())
 
-                # Pick the next position FROM the same P: argmax(P) when deterministic,
-                # else sample from P (regen_position_temperature>0 -> diverse trajectories).
-                if regen_position_temperature is None or regen_position_temperature <= 0:
+                # N=1 is the deterministic argmax baseline. N>1 is the
+                # pseudo-online offline path and samples from the same soft label.
+                if regen_copies_per_sample <= 1:
                     max_idx = soft_dist.masked_fill(~decode.bool(), float("-inf")).argmax(dim=1)
                 else:
                     max_idx = torch.multinomial(soft_dist, num_samples=1).squeeze(-1)
@@ -1643,25 +1668,27 @@ def regenerate_trajectory_data(start_block=None, end_block=None, override_model=
             m.train()
 
 
-def _serialized_file_expected_bytes(cfg):
+def _serialized_file_expected_bytes(cfg, copies_per_sample=1):
     raw_base = np.memmap(base_path, dtype=np.uint16, mode='r')
     num_blocks = len(raw_base) // cfg.base_seq_len
     del raw_base
-    return num_blocks * cfg.train_seq_len * np.dtype(np.uint16).itemsize
+    return num_blocks * copies_per_sample * cfg.train_seq_len * np.dtype(np.uint16).itemsize
 
 
-def _serialized_file_ready(path, cfg):
+def _serialized_file_ready(path, cfg, copies_per_sample=None):
     path = Path(path)
     try:
         if not path.exists():
             return False
         size = path.stat().st_size
+        copies = regen_copies_per_sample if copies_per_sample is None else int(copies_per_sample)
         if regen_max_blocks > 0:
-            # subsampled regen writes fewer blocks; any nonzero whole number of
-            # serialized rows is valid (atomic tmp+rename rules out partials)
+            # Subsampled regen writes a row count different from the full base
+            # set; any nonzero whole number of serialized rows is valid
+            # (atomic tmp+rename rules out partials).
             row_bytes = cfg.train_seq_len * np.dtype(np.uint16).itemsize
             return size > 0 and size % row_bytes == 0
-        return size == _serialized_file_expected_bytes(cfg)
+        return size == _serialized_file_expected_bytes(cfg, copies_per_sample=copies)
     except OSError:
         return False
 
@@ -1683,7 +1710,7 @@ def _atomic_write_uint16_file(path, array):
 def _ensure_l2r_trajectory_file(path, cfg, description):
     """Create a serialized L2R trajectory on rank 0, then sync readers."""
     path = Path(path)
-    if master_process and not _serialized_file_ready(path, cfg):
+    if master_process and not _serialized_file_ready(path, cfg, copies_per_sample=1):
         print(f"{description} not found or incomplete; generating {path}")
         logger.info(f"{description} not found or incomplete; generating {path}")
         raw_base = np.memmap(base_path, dtype=np.uint16, mode='r')
@@ -1694,8 +1721,20 @@ def _ensure_l2r_trajectory_file(path, cfg, description):
         del l2r_data, raw_base
     if ddp:
         torch.distributed.barrier()
-    if not _serialized_file_ready(path, cfg):
+    if not _serialized_file_ready(path, cfg, copies_per_sample=1):
         raise FileNotFoundError(f"{description} is missing or incomplete after generation: {path}")
+
+
+def _train_file_copies_for_iter(iter_marker, copies_per_sample=None):
+    if int(iter_marker) == 0:
+        return 1
+    return regen_copies_per_sample if copies_per_sample is None else int(copies_per_sample)
+
+
+def _train_file_for_iter(iter_marker, copies_per_sample=None):
+    copies = _train_file_copies_for_iter(iter_marker, copies_per_sample=copies_per_sample)
+    suffix = "" if copies <= 1 else f"_x{copies}"
+    return Path(out_dir) / f"train_{int(iter_marker)}{suffix}.bin"
 
 
 def regenerate_trajectory_data_parallel(out_path, override_model=None, soft_index_out_path=None):
@@ -1725,8 +1764,10 @@ def regenerate_trajectory_data_parallel(out_path, override_model=None, soft_inde
     my_indices = sel[rank * per_rank : (rank + 1) * per_rank]
 
     if master_process:
+        out_rows = len(sel) * regen_copies_per_sample
         print(f"Regenerating trajectory data across {world} GPU(s) "
-              f"({len(sel)}/{num_blocks} blocks, ~{per_rank} per rank)...", flush=True)
+              f"({len(sel)}/{num_blocks} base blocks, copies={regen_copies_per_sample}, "
+              f"out_rows={out_rows}, ~{per_rank} base blocks per rank)...", flush=True)
 
     return_soft_index = soft_index_out_path is not None
     shard = regenerate_trajectory_data(
@@ -1922,26 +1963,33 @@ if wandb_log and master_process:
 
 
 #new_data = regenerate_trajectory_data()
-#new_data.astype(np.uint16).tofile(os.path.join(out_dir, f'train_{iter_num}.bin'))
+#new_data.astype(np.uint16).tofile(str(_train_file_for_iter(iter_num)))
 train_data_iter = iter_num
 if init_from == 'resume':
     train_data_iter = (iter_num // round_interval) * round_interval
-train_data_path = Path(out_dir) / f'train_{train_data_iter}.bin'
+train_data_path = _train_file_for_iter(train_data_iter)
 train_data_cfg = get_scoring_model(model).config
 train_soft_index_path = _soft_index_file_for_train_path(train_data_path)
 if init_from == 'scratch' and iter_num == 0:
     # Initial train_0.bin is ALWAYS built in L2R base order; --shuffle_order then
     # decides whether round-1 trains on it as-is (L2R) or randomly shuffled.
     _ensure_l2r_trajectory_file(train_data_path, train_data_cfg, "Initial trajectory file")
-elif not _serialized_file_ready(train_data_path, train_data_cfg):
+elif not _serialized_file_ready(
+    train_data_path,
+    train_data_cfg,
+    copies_per_sample=_train_file_copies_for_iter(train_data_iter),
+):
     if init_from == 'resume' and iter_num > 0 and iter_num % round_interval == 0:
-        prev_train_path = Path(out_dir) / f'train_{iter_num - round_interval}.bin'
-        if _serialized_file_ready(prev_train_path, train_data_cfg):
+        prev_train_iter = iter_num - round_interval
+        prev_train_path = _train_file_for_iter(prev_train_iter)
+        prev_train_copies = _train_file_copies_for_iter(prev_train_iter)
+        if _serialized_file_ready(prev_train_path, train_data_cfg, copies_per_sample=prev_train_copies):
             train_data_path = prev_train_path
+            train_data_iter = prev_train_iter
             _resume_needs_boundary_regen = True
             _skip_resume_eval = False
             if master_process:
-                print(f"WARNING: Missing round-start trajectory {Path(out_dir) / f'train_{iter_num}.bin'}; "
+                print(f"WARNING: Missing round-start trajectory {_train_file_for_iter(iter_num)}; "
                       f"using previous trajectory {prev_train_path} and regenerating at resume boundary.")
                 logger.warning(f"Missing round-start trajectory at resume boundary; "
                                f"using {prev_train_path} and forcing regeneration.")
@@ -1952,6 +2000,7 @@ elif not _serialized_file_ready(train_data_path, train_data_cfg):
             # round-2 from a hard round-1 ckpt stays equivalent to an uninterrupted run.
             _ensure_l2r_trajectory_file(prev_train_path, train_data_cfg, "rebuilt round-1 L2R train_0.bin")
             train_data_path = prev_train_path
+            train_data_iter = prev_train_iter
             _resume_needs_boundary_regen = True
             _skip_resume_eval = False
             if master_process:
@@ -1969,7 +2018,11 @@ elif not _serialized_file_ready(train_data_path, train_data_cfg):
             "For resume, make sure the current round-start train_<round_start>.bin is present."
         )
 train_soft_index_path = _soft_index_file_for_train_path(train_data_path)
-if not _serialized_file_ready(train_data_path, train_data_cfg):
+if not _serialized_file_ready(
+    train_data_path,
+    train_data_cfg,
+    copies_per_sample=_train_file_copies_for_iter(train_data_iter),
+):
     raise FileNotFoundError(f"Training data is missing or incomplete after generation: {train_data_path}")
 train_data = np.memmap(train_data_path, dtype=np.uint16, mode='r')
 
@@ -1981,7 +2034,11 @@ data_canonical_traj = np.memmap(str(canonical_traj_path), dtype=np.uint16, mode=
 
 # --- Multi-source data tracking for warm+mix ---
 data_main = train_data
-data_main_soft = _map_soft_index_file(train_soft_index_path, train_data_cfg)
+data_main_soft = _map_soft_index_file(
+    train_soft_index_path,
+    train_data_cfg,
+    copies_per_sample=_train_file_copies_for_iter(train_data_iter),
+)
 if index_loss_mode == 'soft' and master_process:
     if data_main_soft is None:
         print("Soft-index cache not found for current main trajectory; using dynamic soft targets as fallback.")
@@ -2005,12 +2062,18 @@ if iter_num >= round_interval:
     _missing_prev = []
     _total_bytes = 0
     for r in range(current_round):
-        candidate = Path(out_dir) / f'train_{r * round_interval}.bin'
+        candidate_iter = r * round_interval
+        candidate = _train_file_for_iter(candidate_iter)
+        candidate_copies = _train_file_copies_for_iter(candidate_iter)
         if candidate.exists():
             mm = np.memmap(str(candidate), dtype=np.uint16, mode='r')
             data_prev_list.append(mm)
             data_prev_soft_list.append(
-                _map_soft_index_file(_soft_index_file_for_train_path(candidate), train_data_cfg)
+                _map_soft_index_file(
+                    _soft_index_file_for_train_path(candidate),
+                    train_data_cfg,
+                    copies_per_sample=candidate_copies,
+                )
             )
             _total_bytes += mm.nbytes
         else:
@@ -2119,7 +2182,7 @@ while True:
         is_loss_eval = False
 
     if is_loss_eval:
-        next_train_path = os.path.join(out_dir, f'train_{iter_num}.bin')
+        next_train_path = str(_train_file_for_iter(iter_num))
 
         # All ranks participate in loss estimation (all_reduce inside)
         losses = estimate_loss()
