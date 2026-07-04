@@ -138,9 +138,9 @@ parser.add_argument('--first_round_l2r', type=parse_bool, nargs='?', const=True,
 parser.add_argument('--loss_mode', type=str, default='all', choices=['all', 'value_only'], help='Loss on all serialized tokens (V1) or only value tokens (V2); default: all')
 parser.add_argument('--skip_loss_eval', type=parse_bool, nargs='?', const=True, default=False, help='Skip estimate_loss (train/val/test loss); keeps only AR/PI accuracy eval. Big speedup when soft-index val eval triggers slow online build_soft_index_targets.')
 parser.add_argument('--index_loss_mode', type=str, default='hard', choices=['hard', 'soft'], help='Index-token supervision: hard next-token CE or soft distribution distillation; default: hard')
-parser.add_argument('--soft_index_score_mode', type=str, default='p1-p2', choices=['argmax', 'entropy', 'p1-p2', 'logit_margin', 'gt_prob', 'gt_logprob', 'uniform'], help='Score for soft index targets from parallel value distributions; p1-p2 = prob margin (saturates to 1.0 in confident region -> soft target collapses toward uniform), logit_margin = raw-logit top1-top2 (unbounded, preserves full clue>easy>hard order, pair with soft_index_temperature ~5), uniform = 1/k order-invariance prior')
+parser.add_argument('--soft_index_score_mode', type=str, default='p1-p2', choices=['argmax', 'entropy', 'p1-p2', 'logit_margin', 'gt_prob', 'gt_logprob', 'uniform'], help='Score for soft index targets from parallel value distributions; p1-p2 = prob margin (saturates to 1.0 in confident region -> soft target collapses toward uniform), logit_margin = ground-truth value logit minus best non-ground-truth value logit (unbounded, preserves clue>easy>hard order, pair with soft_index_temperature ~5), uniform = 1/k order-invariance prior')
 parser.add_argument('--soft_index_temperature', type=float, default=1.0, help='Temperature for soft index target distribution')
-parser.add_argument('--shuffle_order', type=parse_bool, nargs='?', const=True, default=False, help='Randomly permute (index, value) pair order per train sample. FOX round design: ROUND-1 (iter<round_interval) shuffles ALL rows -> model learns ORDER-INVARIANCE -> HIGH PI, and this round-1 model is what generates the round-2 trajectories. ROUND-2+ shuffles ONLY the canonical/L2R mix rows (regen rows are kept in their confident-first easy-to-hard order, NOT shuffled, which is what boosts AR via self-distillation). default: False')
+parser.add_argument('--shuffle_order', type=parse_bool, nargs='?', const=True, default=True, help='Randomly permute (index, value) pair order per train sample. FOX round design: ROUND-1 (iter<round_interval) shuffles ALL rows -> model learns ORDER-INVARIANCE -> HIGH PI, and this round-1 model is what generates the round-2 trajectories. ROUND-2+ shuffles ONLY the canonical/L2R mix rows (regen rows are kept in their confident-first easy-to-hard order, NOT shuffled, which is what boosts AR via self-distillation). default: True')
 parser.add_argument('--first_round_only', type=parse_bool, nargs='?', const=True, default=False, help='Stop after round 1 (skip trajectory regeneration); default: False')
 parser.add_argument('--warm_from_best_round', type=parse_bool, nargs='?', const=True, default=False, help='At each round boundary, reload the highest-AR checkpoint of the just-finished round (overfit guard: stop scanning after 2 consecutive AR drops) before regen+continue, instead of warm-starting from the last ckpt; default: False')
 parser.add_argument('--mix_ratios', type=str, default='1.0,0.0,0.0', help='Sampling ratios for [Main, Prev, Canonical] in round 2+; 1.0,0.0,0.0 = pure regen (default), 0.7,0.2,0.1 = warm+mix')
@@ -743,13 +743,11 @@ def get_batch(split):
     data_size = prompt_len + 2 * target_len
 
     use_online_regen = (split == 'train' and online_regen_sample and iter_num >= round_interval and online_regen_model is not None)
-    use_mix = (split == 'train' and iter_num >= round_interval and not use_online_regen
+    use_mix = (split == 'train' and iter_num >= round_interval
                and (mix_ratios[1] > 0 or mix_ratios[2] > 0))
     sources = None
     soft_index_targets = None
-    if use_online_regen:
-        z = _sample_online_regen_batch(batch_size)
-    elif use_mix:
+    if use_mix:
         has_prev = bool(data_prev_list)
         if has_prev:
             effective_ratios = mix_ratios
@@ -757,7 +755,11 @@ def get_batch(split):
             effective_ratios = [mix_ratios[0] + mix_ratios[1], 0.0, mix_ratios[2]]
         sources = np.random.choice(3, size=batch_size, p=effective_ratios)
         z = torch.empty(batch_size, data_size, dtype=torch.long)
-        if index_loss_mode == 'soft' and not (loss_mode == 'value_only' and iter_num < round_interval):
+        if (
+            index_loss_mode == 'soft'
+            and not use_online_regen
+            and not (loss_mode == 'value_only' and iter_num < round_interval)
+        ):
             soft_index_targets = torch.empty(batch_size, response_size, response_size, dtype=torch.float32)
         # source 0: main (current round regen, model's confident-first order)
         mask0 = sources == 0
@@ -769,11 +771,14 @@ def get_batch(split):
                 z[batch_rows] = z0
                 soft0 = _sample_soft_index_targets(data_main_soft, rows0)
                 if soft0 is None:
-                    soft_index_targets[batch_rows] = 0.0
+                    soft_index_targets = None
                 else:
                     soft_index_targets[batch_rows] = soft0
             else:
-                z[batch_rows] = _sample_from_source(data_main, n0, data_size)
+                if use_online_regen:
+                    z[batch_rows] = _sample_online_regen_batch(n0)
+                else:
+                    z[batch_rows] = _sample_from_source(data_main, n0, data_size)
         # source 1: prev — UNIFORM across all prior-round regen files
         mask1 = sources == 1
         n1 = int(mask1.sum())
@@ -785,7 +790,7 @@ def get_batch(split):
                 )
                 z[batch_rows] = z1
                 if soft1 is None:
-                    soft_index_targets[batch_rows] = 0.0
+                    soft_index_targets = None
                 else:
                     soft_index_targets[batch_rows] = soft1
             else:
@@ -800,6 +805,8 @@ def get_batch(split):
             )
             if soft_index_targets is not None:
                 soft_index_targets[canonical_batch_rows] = 0.0
+    elif use_online_regen:
+        z = _sample_online_regen_batch(batch_size)
     else:
         if split == 'train':
             data = data_main
@@ -843,6 +850,14 @@ def get_batch(split):
     x = z[:,:-1].clone()
     y = z[:,1:].clone()
     y[:, :prompt_len - 1] = -100
+
+    # Canonical/L2R mix rows maintain value order-invariance. In round 2+ they
+    # should not add hard or soft supervision on a particular index order.
+    if sources is not None:
+        canonical_rows = np.where(sources == 2)[0]
+        if len(canonical_rows) > 0:
+            idx_target_pos = torch.arange(target_len) * 2 + (prompt_len - 1)
+            y[torch.from_numpy(canonical_rows).unsqueeze(1), idx_target_pos.unsqueeze(0)] = -100
 
     # When index_loss_mode='soft', do NOT mask index targets in round 1: soft loss
     # is only applied at iter >= round_interval, so round 1 needs the index targets
