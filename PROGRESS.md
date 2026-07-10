@@ -129,6 +129,7 @@ Summary:
 - From round 1 to round 4, AR gained `0.287` absolute (`+109.5%` relative) and PI gained `0.235` absolute (`+65.5%` relative).
 - Current PI `0.594` reaches `75.4%` of the reported DOG `0.788`, leaving a `0.194` absolute gap; it has closed `54.8%` of the original round-1-to-DOG gap.
 - Mechanistic hypothesis: original AR supervises only the diagonal state/candidate value pairs, whereas grouped-frontier training supervises the upper triangle of all remaining candidates under the same prefix. This directly targets the off-policy value/confidence estimates used by PI and trajectory regeneration.
+- Clarified the grouped loss layout: for a shared sampled frontier `kk`, the retained targets are `[next_index, remaining_value_1, ..., remaining_value_r]` with `r=K-kk`. Weighting the first target by `r` and every value target by `1`, then normalizing by the total weight, gives exactly `0.5 * mean(next-index CE) + 0.5 * mean(remaining-value CE)` for that batch.
 - If the response has `K` positions (`K` is not the 512 embedding size), a sampled frontier supervises `(K+1)/2` remaining values on average. Relative to uniform one-value supervision, the expected weight multiplier for trajectory value `j` is `sum_{n=K-j}^K 1/n`, shifting weight from early/easy values toward late/hard values while keeping total value-loss mass fixed.
 - Causality is not established from one run and four rounds; the old-PDF comparison also requires matched seed, data, optimizer, trajectory mix, evaluation, and checkpoint selection.
 
