@@ -110,3 +110,28 @@ Summary:
 Next:
 
 - Treat direct weighting and batch-shared sampling as expectation-equivalent only for the index branch; design a separate full-training ablation for value-context and finite-gradient-variance effects.
+
+## 2026-07-10 14:47 - Analyze user-reported 4-8-512 round metrics
+
+Status: in_progress
+
+Branch: unknown; user-run provenance pending
+
+Machine: unknown; user-reported training run
+
+Related run: `user_reported_serfox_4-8-512_round4`
+
+Summary:
+
+- Recorded four completed round-end accuracies: `(AR, PI)=(0.262,0.359)`, `(0.461,0.530)`, `(0.512,0.556)`, and `(0.549,0.594)`.
+- AR improved monotonically by `+0.199`, `+0.051`, and `+0.037`; PI improved by `+0.171`, `+0.026`, and `+0.038`.
+- The PI-minus-AR gap remained positive at `+0.097`, `+0.069`, `+0.044`, and `+0.045`, so PI has not shown the previous multi-round collapse through round 4.
+- From round 1 to round 4, AR gained `0.287` absolute (`+109.5%` relative) and PI gained `0.235` absolute (`+65.5%` relative).
+- Current PI `0.594` reaches `75.4%` of the reported DOG `0.788`, leaving a `0.194` absolute gap; it has closed `54.8%` of the original round-1-to-DOG gap.
+- Mechanistic hypothesis: original AR supervises only the diagonal state/candidate value pairs, whereas grouped-frontier training supervises the upper triangle of all remaining candidates under the same prefix. This directly targets the off-policy value/confidence estimates used by PI and trajectory regeneration.
+- If the response has `K` positions (`K` is not the 512 embedding size), a sampled frontier supervises `(K+1)/2` remaining values on average. Relative to uniform one-value supervision, the expected weight multiplier for trajectory value `j` is `sum_{n=K-j}^K 1/n`, shifting weight from early/easy values toward late/hard values while keeping total value-loss mass fixed.
+- Causality is not established from one run and four rounds; the old-PDF comparison also requires matched seed, data, optimizer, trajectory mix, evaluation, and checkpoint selection.
+
+Next:
+
+- Continue tracking later rounds and run controlled coverage/context ablations with confidence-calibration heatmaps.

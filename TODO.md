@@ -2,10 +2,12 @@
 
 ## Doing
 
-- None.
+- [ ] Track later rounds and full provenance for the user-reported 4-8-512 grouped-frontier run; four rounds currently report `(AR, PI)=(0.549,0.594)`.
 
 ## Next
 
+- [ ] Run a matched ablation separating (a) one chosen value vs all remaining values and (b) teacher-forced causal context vs isolated teacherless candidate context.
+- [ ] Add prefix-depth × candidate-rank metrics: value accuracy/NLL, confidence ECE or Brier score, and confidence-ranking quality for every unresolved position.
 - [ ] Decide whether the next training ablation should compare batch-shared `kk` against per-sample `kk` or direct all-frontier weighting, especially for large `K`.
 - [ ] Decide whether to evaluate the Siwei grouped-frontier objective as an ablation against full serialized AR.
 - [ ] Before running the mine snapshot, explicitly pair the trainer with the intended model file and fix the `_msk` / `_mask` mismatch.
@@ -17,6 +19,7 @@
 
 ## Done
 
+- [x] Analyzed the first four rounds of the user-reported 4-8-512 run: AR gained 28.7 points, PI gained 23.5 points, and PI stayed 4.4-9.7 points above AR.
 - [x] Ran and analyzed the isolated amax-77 CPU diagnostic at commit `9fc8d76`; direct and enumerated sampled index gradients matched within `3.23e-7` relative L2, while Monte Carlo gradient error followed the expected `N^-1/2` decay.
 - [x] Completed a static and minimal-runtime comparison of the four files on 2026-07-10; no training job was launched.
 - [x] Added and verified two Mermaid/PNG diagrams explaining the objective-level difference and a concrete `K=4`, `kk=2` frontier example.

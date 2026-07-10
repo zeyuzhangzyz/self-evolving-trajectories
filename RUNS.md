@@ -1,5 +1,48 @@
 # Runs
 
+## 2026-07-10 14:47 - user_reported_serfox_4-8-512_round4
+
+Status: running (user-reported; four rounds completed)
+
+Task type: training run; exact CPU/GPU allocation pending
+
+Machine: pending user provenance
+
+GPU: pending user provenance
+
+Branch: pending user provenance
+
+Commit: pending user provenance
+
+Script: pending user provenance
+
+Command: pending user provenance
+
+Input: pending user provenance
+
+Output: pending user provenance
+
+Log: pending user provenance
+
+Checkpoint: pending user provenance
+
+Provenance file: pending user provenance
+
+Key config: Ser-FOX backbone `4-8-512`; grouped random-frontier training described as changing one-step `T -> T-1` value supervision into same-prefix supervision of all remaining positions (`T -> 0` shorthand)
+
+Key results:
+
+| Round | AR | PI | PI - AR | AR delta | PI delta |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 0.262 | 0.359 | +0.097 | N/A | N/A |
+| 2 | 0.461 | 0.530 | +0.069 | +0.199 | +0.171 |
+| 3 | 0.512 | 0.556 | +0.044 | +0.051 | +0.026 |
+| 4 | 0.549 | 0.594 | +0.045 | +0.037 | +0.038 |
+
+Notes: PI is monotonic and remains above AR through round 4. The user reports that AR 0.549 exceeds the prior PDF maximum for the same model size. DOG PI reference is 0.788, leaving a 0.194 absolute gap. These are single-run observations until seeds and full provenance are available.
+
+Next action: collect later rounds and provenance; run a matched ablation isolating remaining-value coverage, teacherless isolation, shared-frontier positions, and value reweighting.
+
 ## 2026-07-10 14:38 - direct_vs_batch_shared_k4_16_81_v1
 
 Status: completed
