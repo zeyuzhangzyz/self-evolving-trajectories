@@ -54,3 +54,30 @@ Summary:
 Next:
 
 - Use the diagrams to choose whether grouped-frontier training should become a controlled ablation or remain separate from the serialized-AR path.
+
+## 2026-07-10 14:23 - Prepare index-gradient estimator experiment
+
+Status: planned
+
+Branch: `codex/attention-mask-slides`
+
+Machine: local Windows workspace; planned CPU-only execution
+
+Related files:
+
+- `scripts/experiments/compare_index_gradient_estimators.py`
+- `scripts/experiments/run_compare_index_gradient_estimators.sh`
+- `AGENTS.md`
+- `ROADMAP.md`
+- `TODO.md`
+
+Summary:
+
+- Prepared a tiny-Ser-FOX experiment comparing the direct index objective `1/(2K)` per frontier with the current batch-shared sampled estimator `1/2` on one uniformly sampled frontier.
+- The experiment checks exact enumerated loss/gradient expectation and Monte Carlo convergence for `K=4,16,81` using multiple problem and sampling seeds.
+- The planned run is CPU-only, disables CUDA, refuses to overwrite results, and records raw tables, summaries, logs, Git/environment provenance, and the original command.
+- No experiment has been launched; execution is waiting for the required user confirmation.
+
+Next:
+
+- After confirmation, check CPU load, memory, and disk; run the committed launcher; analyze and record the results.

@@ -16,4 +16,5 @@ Develop and validate Ser-FOX self-evolving trajectory training and evaluation wh
 
 ## Next milestone
 
-- Select the intended model/trainer pairing, add focused interface tests, and define a controlled AR/PI comparison run before launching experiments.
+- First verify on a tiny CPU Ser-FOX model that direct all-index weighting and batch-shared random-frontier sampling have matching expected loss and gradients, while measuring Monte Carlo variance as K grows.
+- Then select the intended model/trainer pairing, add focused interface tests, and define a controlled AR/PI comparison run before launching full training experiments.

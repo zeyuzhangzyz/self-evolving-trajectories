@@ -20,3 +20,9 @@ This repository contains the public Ser-FOX / self-evolving trajectory training 
 - Write formal training, evaluation, or batch commands into bash scripts in the repository before running them remotely.
 - Commit and push the script and related code first, then run the Git-synchronized script on the server.
 - Before starting resource-heavy jobs, report dataset, checkpoint/model, key hyperparameters, machine, GPU/CPU plan, output directory, command/script path, overwrite behavior, and checkpoint/provenance behavior.
+
+## Local Diagnostic Experiments
+
+- `scripts/experiments/run_compare_index_gradient_estimators.sh` is the CPU-only launcher for comparing direct all-index weighting with the current batch-shared random-frontier estimator.
+- The experiment uses tiny synthetic serialized trajectories and `Ser-FOX/serfox_model.py`; it writes raw CSV, exact expectation checks, JSON/Markdown summaries, a log, and `provenance.txt` under `results/index_weighting_sampling/<run_tag>/`.
+- The launcher refuses to overwrite an existing output directory and explicitly disables CUDA.
