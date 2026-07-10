@@ -81,3 +81,32 @@ Summary:
 Next:
 
 - After confirmation, check CPU load, memory, and disk; run the committed launcher; analyze and record the results.
+
+## 2026-07-10 14:40 - Complete amax-77 index-gradient estimator diagnostic
+
+Status: done
+
+Branch: detached remote checkout from `codex/attention-mask-slides`
+
+Commit: `9fc8d76e1f4905c600540b18a5e31e929f104a10`
+
+Machine: `amax-77`, CPU-only, two threads, `CUDA_VISIBLE_DEVICES=""`
+
+Related files:
+
+- `scripts/experiments/compare_index_gradient_estimators.py`
+- `scripts/experiments/run_compare_index_gradient_estimators.sh`
+- Remote output: `/home/amax/experiments/self-evolving-trajectories-9fc8d76/results/index_weighting_sampling/direct_vs_batch_shared_k4_16_81_v1/`
+
+Summary:
+
+- Created a dedicated Git checkout and venv on amax-77; no existing Conda environment or project checkout was modified.
+- Verified 720 raw Monte Carlo rows are finite and complete across `K=4,16,81`, four draw counts, three problem seeds, and twenty sampling seeds.
+- Exact enumeration matched direct weighting within `1.20e-7` absolute loss error and `3.23e-7` relative gradient L2, confirming that the sampled index estimator is unbiased to float32 precision.
+- Finite-sample gradient error was material: at 100 draws it was `12.3%`, `28.2%`, and `95.2%` for `K=4,16,81`; at 100,000 draws it fell to `0.331%`, `0.912%`, and `2.96%`.
+- Log-log gradient-error slopes were `-0.522`, `-0.496`, and `-0.501`, consistent with Monte Carlo `N^-1/2` convergence.
+- Pre/post checks confirmed all GPUs stayed at 0% utilization and 18 MiB idle memory.
+
+Next:
+
+- Treat direct weighting and batch-shared sampling as expectation-equivalent only for the index branch; design a separate full-training ablation for value-context and finite-gradient-variance effects.

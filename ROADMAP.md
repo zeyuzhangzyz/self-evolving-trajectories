@@ -16,5 +16,5 @@ Develop and validate Ser-FOX self-evolving trajectory training and evaluation wh
 
 ## Next milestone
 
-- First verify on a tiny CPU Ser-FOX model that direct all-index weighting and batch-shared random-frontier sampling have matching expected loss and gradients, while measuring Monte Carlo variance as K grows.
-- Then select the intended model/trainer pairing, add focused interface tests, and define a controlled AR/PI comparison run before launching full training experiments.
+- Completed: a tiny CPU Ser-FOX diagnostic verified that direct all-index weighting and batch-shared random-frontier sampling have identical expected index loss and gradients to float32 precision; finite-sample gradient variance grows strongly with K and decays as approximately `N^-1/2`.
+- Next, decide whether a controlled training ablation should use direct all-frontier weighting, batch-shared `kk`, or per-sample `kk`, then add focused interface tests and compare full AR/PI behavior.

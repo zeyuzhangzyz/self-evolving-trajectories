@@ -26,3 +26,12 @@ This repository contains the public Ser-FOX / self-evolving trajectory training 
 - `scripts/experiments/run_compare_index_gradient_estimators.sh` is the CPU-only launcher for comparing direct all-index weighting with the current batch-shared random-frontier estimator.
 - The experiment uses tiny synthetic serialized trajectories and `Ser-FOX/serfox_model.py`; it writes raw CSV, exact expectation checks, JSON/Markdown summaries, a log, and `provenance.txt` under `results/index_weighting_sampling/<run_tag>/`.
 - The launcher refuses to overwrite an existing output directory and explicitly disables CUDA.
+
+## amax-77 Diagnostic Environment
+
+- SSH alias: `amax-77`.
+- Isolated repository for the index-gradient diagnostic: `/home/amax/experiments/self-evolving-trajectories-9fc8d76`, cloned through Git and detached at commit `9fc8d76e1f4905c600540b18a5e31e929f104a10`.
+- Isolated Python environment: `/home/amax/.virtualenvs/serfox-index-estimator-9fc8d76`; it is a venv based on `/home/amax/miniforge3/envs/ml` with system-site packages, Python 3.11.13, PyTorch 2.6.0+cu124, and NumPy 2.1.3.
+- Known environment pitfall: `/usr/bin/python3 -m venv` fails because system `ensurepip` is unavailable. For this diagnostic, create the isolated venv with `/home/amax/miniforge3/envs/ml/bin/python -m venv --system-site-packages <venv-path>` instead.
+- The diagnostic is CPU-only (`CUDA_VISIBLE_DEVICES=""`, two CPU threads). Its outputs are under the isolated repository's `results/index_weighting_sampling/<run_tag>/` directory.
+- Continue syncing code to this server only through Git/GitHub; do not edit the isolated checkout directly.
