@@ -17,3 +17,4 @@
 ## Done
 
 - [x] Completed a static and minimal-runtime comparison of the four files on 2026-07-10; no training job was launched.
+- [x] Added and verified two Mermaid/PNG diagrams explaining the objective-level difference and a concrete `K=4`, `kk=2` frontier example.

@@ -26,3 +26,31 @@ Summary:
 Next:
 
 - Decide which objective should be tested and fix the selected pair's interface issues before any formal run.
+
+## 2026-07-10 12:43 - Add detailed visual explanation of training objectives
+
+Status: done
+
+Branch: `codex/attention-mask-slides`
+
+Machine: local Windows workspace (CPU-only diagram rendering)
+
+Related files:
+
+- `figures/serfox-training-objective-comparison.mmd`
+- `figures/serfox-training-objective-comparison.md`
+- `figures/serfox-training-objective-comparison.png`
+- `figures/serfox-k4-frontier-example.mmd`
+- `figures/serfox-k4-frontier-example.md`
+- `figures/serfox-k4-frontier-example.png`
+
+Summary:
+
+- Added an overview diagram showing that both variants share the same parameterized GPT backbone but use different batch contexts and losses.
+- Added a concrete `Q=2`, `K=4`, `kk=2` example with a non-canonical trajectory order, explicit hidden-to-target alignment, shared-frontier positions, isolation, and loss weights.
+- Rendered both Mermaid sources to PNG with Mermaid CLI and visually reviewed arrow direction, labels, completeness, and readability; both diagrams passed the required review threshold.
+- No model, trainer, configuration, dataset, remote state, or formal experiment result was changed.
+
+Next:
+
+- Use the diagrams to choose whether grouped-frontier training should become a controlled ablation or remain separate from the serialized-AR path.

@@ -1,0 +1,64 @@
+# Ser-FOX K=4 Frontier Example
+
+这张图用 `Q=2`、`K=4`、`k=2` 的具体轨迹展示两版输入、可见上下文、监督目标和 loss 权重。
+
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"background": "#ffffff", "primaryTextColor": "#111827", "lineColor": "#334155", "fontFamily": "Arial, Microsoft YaHei, sans-serif"}, "flowchart": {"curve": "basis", "htmlLabels": true}}}%%
+flowchart TB
+    source["具体例子：prompt 长度 Q=2，位置数 K=4<br/>z = [Qa, Qb, IDX2, 7, IDX0, 4, IDX3, 9, IDX1, 5]<br/>轨迹顺序可以不同于坐标顺序"]
+
+    subgraph mine_example["我们的版本：完整 AR"]
+        direction TB
+        mine_x["x = [Qa, Qb, IDX2, 7, IDX0, 4, IDX3, 9, IDX1]"]
+        mine_targets["有效 targets = [IDX2, 7, IDX0, 4, IDX3, 9, IDX1, 5]<br/>Qb 对应的 prompt target 被 mask"]
+        mine_context["例如预测最后的值 5 时，hidden(IDX1) 可见<br/>Qa,Qb,IDX2,7,IDX0,4,IDX3,9,IDX1"]
+        mine_loss["L_AR = 8 个有效 next-token CE 的平均"]
+        mine_x --> mine_targets --> mine_context --> mine_loss
+    end
+
+    subgraph siwei_example["Siwei 版本：取 k=2，因此 n=K-k=2"]
+        direction TB
+        siwei_x["x = [Qa, Qb, IDX2, 7, IDX0, 4, IDX3, IDX1]<br/>prefix 已完成前 2 个 pair；尾部只放剩余 index"]
+        frontier["IDX3 与 IDX1 均使用 frontier position id = 6<br/>二者不能互相 attention"]
+        h_v1["hidden(4)<br/>只看 causal prefix"]
+        h_i2["hidden(IDX3)<br/>看 prefix + IDX3 自己"]
+        h_i3["hidden(IDX1)<br/>看 prefix + IDX1 自己<br/>看不到 IDX3，也没有值 9 输入"]
+        target_i2["target IDX3"]
+        target_v2["target 9"]
+        target_v3["target 5"]
+        siwei_loss["L_group = [2 CE(IDX3) + CE(9) + CE(5)] / 4<br/>next-index 占 1/2；两个 remaining values 合计占 1/2"]
+
+        siwei_x --> h_v1
+        siwei_x --> frontier
+        frontier --> h_i2
+        frontier --> h_i3
+        h_v1 -->|"预测；权重 2"| target_i2
+        h_i2 -->|"预测；权重 1"| target_v2
+        h_i3 -->|"预测；权重 1"| target_v3
+        target_i2 --> siwei_loss
+        target_v2 --> siwei_loss
+        target_v3 --> siwei_loss
+    end
+
+    takeaway["关键差别<br/>我们的最后一个值 5 可利用此前的值 9<br/>Siwei 在同一 frontier 独立预测 9 和 5<br/>因此更直接训练 PI 所需的并行 value 能力"]
+
+    source --> mine_x
+    source --> siwei_x
+    mine_loss --> takeaway
+    siwei_loss --> takeaway
+
+    classDef input fill:#ECFDF5,stroke:#10B981,stroke-width:2px,color:#064E3B;
+    classDef mine fill:#EFF6FF,stroke:#2563EB,stroke-width:2px,color:#1E3A8A;
+    classDef siwei fill:#F5F3FF,stroke:#7C3AED,stroke-width:2px,color:#4C1D95;
+    classDef target fill:#FFF7ED,stroke:#EA580C,stroke-width:2px,color:#7C2D12;
+    classDef output fill:#FFF7ED,stroke:#EA580C,stroke-width:3px,color:#7C2D12;
+
+    class source input;
+    class mine_x,mine_targets,mine_context,mine_loss mine;
+    class siwei_x,frontier,h_v1,h_i2,h_i3,siwei_loss siwei;
+    class target_i2,target_v2,target_v3 target;
+    class takeaway output;
+    style mine_example fill:#F8FBFF,stroke:#93C5FD,stroke-width:2px
+    style siwei_example fill:#FBF9FF,stroke:#C4B5FD,stroke-width:2px
+    linkStyle default stroke:#334155,stroke-width:2px;
+```
